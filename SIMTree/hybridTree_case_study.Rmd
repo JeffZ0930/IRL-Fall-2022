@@ -1,0 +1,168 @@
+---
+title: "boston_hybridTree"
+output: pdf_document
+date: "2022-12-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+###  HTGLMNET
+
+```{r HTGLMNET, include=FALSE}
+
+PrintPredictionError = function(y, py) {
+  print("GINI")
+  print(giniTest(y,py))
+  # print("NormalizedGini")
+  # print(normalizedGini(y,py))
+  print("R2")
+  print(r2(y,py))
+  print("CCC")
+  print(ccc(y,py))
+  # print("ME")
+  # print(me(y,py))
+  # print("PE")
+  # print(pe(y,py))
+  print("RMSE")
+  print(rmse(y,py))
+  print("MAE")
+  print(mae(y,py))
+  print("MAPE")
+  print(mape(y,py))
+  print("MPE")
+  print(mpe(y,py))
+}
+
+library(rpart.plot)
+HybridTreeGlmnetFit <- function(formulaTree, formulaGLM, dataTrain, 
+                           cp, maxdepth, zeroThreshold,
+                           glmWhich, glmLambda) {
+  
+  rpartTree <- rpart::rpart(as.formula(formulaTree), data = dataTrain,
+                     xval = 0,  # fix
+                     maxdepth = maxdepth, cp = cp)  # tuning hyperparameter
+  
+  dataTrain$Node <- rpartTree$where  # assign node to each observation
+  dataTrain$yFitted <- 0
+  
+  yName <- all.vars(formulaTree)[1]
+  nodeId <- unique(dataTrain$Node)  # find node label at leaf
+  glmResult <- list()
+  
+  for (n in nodeId) {
+    tempSet <- dataTrain[which(dataTrain$Node == n), ]
+    percentZeros <- length(which(tempSet[, yName] == 0)) / nrow(tempSet)
+    
+    if (percentZeros >= zeroThreshold) {
+      dataTrain[which(dataTrain$Node == n), "yFitted"] <- 0
+      glmResult <- c(glmResult, list(0))
+      next
+    } 
+    if(nrow(tempSet) <40) {
+      glmYname <- all.vars(formulaGLM)[1]
+      dataTrain[which(dataTrain$Node == n), "yFitted"] <- 
+        mean(dataTrain[which(dataTrain$Node == n), glmYname])
+      glmResult <- c(glmResult,mean(dataTrain[which(dataTrain$Node == n), glmYname]))
+      next
+    }
+    
+    tempSet <- na.omit(tempSet) ## omit NA
+    glmFit <- glmnetUtils::cva.glmnet(formulaGLM, data = tempSet, family = "gaussian")
+    glmResult <- c(glmResult, list(glmFit))
+    dataTrain[which(dataTrain$Node == n), "yFitted"] <- predict(glmFit, tempSet, 
+                                                                which = glmWhich, 
+                                                                s = glmLambda, 
+                                                                type = "response")
+    }
+  dataTrain$yFitted[dataTrain$yFitted < 0] <- 0
+  
+  linearIndex <- as.integer(rownames(rpartTree$frame)[nodeId])
+   
+  return(list(HybridTreeModel = list(tree = rpartTree, 
+                                     glms = glmResult, 
+                                     linearIndex = linearIndex,
+                                     nodeID = nodeId, 
+                                     glmWhich = glmWhich, 
+                                     glmLambda = glmLambda),
+              fittedSet = dataTrain))
+
+}
+
+
+
+HybridTreeGlmnetPredict <- function(model, newData) {
+  
+  rpartTree <- model$HybridTreeModel$tree
+  predictedFrameId <- rpart.predict(rpartTree, newdata = newData, nn = TRUE)$nn
+  for (n in model$HybridTreeModel$nodeID) {
+    frameId <- as.integer(rownames(rpartTree$frame))[n]
+    predictedFrameId[which(predictedFrameId == frameId)] <- n
+  }
+  
+  newData$Node <- predictedFrameId
+  
+  newData$yFitted <- 0
+  for(i in (1 : length(model$HybridTreeModel$nodeID))){
+    glmFit <- model$HybridTreeModel$glms[[i]]
+    nodeId <- model$HybridTreeModel$nodeID[i]
+    
+    if(length(which(newData$Node == nodeId)) == 0) next
+    if(is.double(glmFit)) {
+      newData[which(newData$Node == nodeId), ]$yFitted <- glmFit
+    } else {
+      tempSet <- newData[which(newData$Node == nodeId), ]
+      tempSet <- na.omit(tempSet) ## omit NA
+      newData[which(newData$Node == nodeId), ]$yFitted <-
+        predict(glmFit, tempSet, 
+                which = model$HybridTreeModel$glmWhich, 
+                s = model$HybridTreeModel$glmLambda,
+                type = "response")
+    }
+  }
+  newData$yFitted[newData$yFitted < 0] <- 0
+  return(newData)
+}
+
+```
+
+
+```{r}
+boston_train = read.csv("boston_train.csv")
+boston_test = read.csv("boston_test.csv")
+boston_test_x <- subset(boston_test, select = -medv)
+boston_test_y <- boston_test$medv
+BostonSet <- HybridTreeGlmnetFit(as.formula(paste("medv ~ .")), as.formula(paste("medv ~ .")), dataTrain = boston_train, 0.00001, 4, 0.01, 1, "lambda.min")
+# trainning error
+PrintPredictionError(as.vector(BostonSet$fittedSet$medv), as.vector(BostonSet$fittedSet$yFitted))
+
+# test dataset prediction
+#predict_Data = HybridTreeGlmnetPredict(BostonSet, boston_test_x)
+#PrintPredictionError(as.vector(boston_test$medv), as.vector(predict_Data$yFitted))
+```
+```{r}
+#hyper parameter tuning
+
+for (depth in list(1,3)) {
+  #for (cp in seq(0.00001, 0.00030, 0.00001)) {
+    for (glmwhich in seq(1, 10, 1)) {
+      for (glmLambda in list("lambda.min", "lambda.1se")) {
+        BostonSet <- HybridTreeGlmnetFit(as.formula(paste("medv ~ .")), as.formula(paste("medv ~ .")), dataTrain = boston_train, 0.00001, depth, 0.01, glmwhich, glmLambda)   
+        predict_Data = HybridTreeGlmnetPredict(BostonSet, boston_test_x)
+        cat("depth:", depth, "cp:", cp, "glmwhich:", glmwhich, "glmLambda:", glmLambda, "RMSE:", rmse(boston_test$medv, predict_Data$yFitted), "\n")
+      }
+    }
+  #}
+}
+```
+
+```{r}
+BostonSet <- HybridTreeGlmnetFit(as.formula(paste("medv ~ .")), as.formula(paste("medv ~ .")), dataTrain = boston_train, 0.00001, 3, 0.01, 3, "lambda.1se")   
+PrintPredictionError(as.vector(BostonSet$fittedSet$medv), as.vector(BostonSet$fittedSet$yFitted))
+
+
+predict_Data = HybridTreeGlmnetPredict(BostonSet, boston_test_x)
+cat("depth:", 3, "cp:", 0.00001, "glmwhich:", 3, "glmLambda:", 3, "RMSE:", rmse(boston_test$medv, predict_Data$yFitted), "\n")
+
+```

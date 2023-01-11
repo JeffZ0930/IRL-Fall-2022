@@ -1,0 +1,626 @@
+---
+title: "Hybrid Tree Simulation Study"
+author: "Changyue Hu"
+date: "9/8/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r measure, include=FALSE}
+
+set.seed(777)
+
+# normalizedGini <- function(aa, pp) {
+#     Gini <- function(a, p) {
+#         if (length(a) !=  length(p)) stop("Actual and Predicted need to be equal lengths!")
+#         temp.df = data.frame(actual = a, pred = p, range=c(1:length(a)))
+#         temp.df = temp.df[order(-temp.df$pred, temp.df$range),]
+#         population.delta = 1 / length(a)
+#         total.losses = sum(a)
+#         null.losses = rep(population.delta, length(a)) # Hopefully is similar to accumulatedPopulationPercentageSum
+#         accum.losses = temp.df$actual / total.losses # Hopefully is similar to accumulatedLossPercentageSum
+#         gini.sum = cumsum(accum.losses - null.losses) # Not sure if this is having the same effect or not
+#         sum(gini.sum) / length(a)
+#     }
+#     Gini(aa,pp) / Gini(aa,aa)
+# }
+
+### gini test
+giniTest <- function(y, py){
+  # Calculate a gini score
+  # Parameters:
+  #     y: The real data from observation
+  #     py: The predicted value from model
+  # Return: gini score for this prediction
+  # Algorithm: 
+  #   1. Use a uniform random vector to break ties from predicted values
+  #   2. Use predicted values to rank observed y
+  #   3. Calculated gini score used ranked observed y.
+  data = as.data.frame(cbind(y, py))
+  set.seed(1)
+  n = length(y)
+  data$rand.unif = runif(n)
+  
+  sorted.y = data[order(data$py, data$rand.unif), ][, 1]
+  i = seq(n)
+  giniIndex = 1-2/(n-1)*(n-sum(sorted.y*i)/sum(sorted.y))
+  return(giniIndex)
+}
+
+
+mpe = function (y, py) {
+  MPE = NULL
+  y[y==0] = NA
+  MPE= mean ( (y - py) / y, na.rm = TRUE) * 100
+  return (MPE)
+  }
+
+
+mape = function (y, py) {
+  MAPE = NULL
+  y[y==0] = NA
+  MAPE = mean ( abs ((y - py) / y), na.rm = TRUE) * 100
+  return (MAPE)
+}
+
+
+mae = function (y, py) {
+  MAE = NULL
+  MAE = mean ( abs (y - py))
+  return (MAE)
+  }
+
+rmse = function (y, py) {
+  RMSE = NULL
+  RMSE = sqrt(mean((y - py)^2))
+  return (RMSE)
+  }
+
+
+ccc = function (y, py) {
+  CCC = NULL
+  CCC=  2*cor(py,y)*sd(y)*sd(py) / (var(y)+var(py)+(mean(y)-mean(py))^2)
+  return (CCC)
+  }
+
+r2 = function (y, py) {
+  R2 = NULL
+  R2=  1 - sum( (py-y)^2 ) / sum( (mean(y)-y)^2)
+  return (R2)
+  }
+
+PredictionError = function(modelname, y, py) {
+  res = NULL
+  res = data.table(Model=modelname, 
+                   Gini = giniTest(y,py), 
+                   # NormalizedGini = normalizedGini(y,py),
+                   R2 = r2(y,py),
+                   CCC = ccc(y,py),
+                   # ME = me(y,py), 
+                   # PE = pe(y,py),
+                   RMSE = rmse(y,py), 
+                   MAE = mae(y,py),
+                   MAPE = mape(y,py),
+                   MPE = mpe(y,py)
+                   )
+  return(res)
+}
+
+
+
+PrintPredictionError = function(y, py) {
+  print("GINI")
+  print(giniTest(y,py))
+  # print("NormalizedGini")
+  # print(normalizedGini(y,py))
+  print("R2")
+  print(r2(y,py))
+  print("CCC")
+  print(ccc(y,py))
+  # print("ME")
+  # print(me(y,py))
+  # print("PE")
+  # print(pe(y,py))
+  print("RMSE")
+  print(rmse(y,py))
+  print("MAE")
+  print(mae(y,py))
+  print("MAPE")
+  print(mape(y,py))
+  print("MPE")
+  print(mpe(y,py))
+}
+
+# Gini Index 
+
+# Gini - Plot ordered Laurenz curve, and return Gini index.
+# R - relativity (Score/Premium)
+# Prm - Premium
+# y - Loss
+# ttl - Title of the plot
+Gini <- function(R,Prm,y,ttl="Plot Laurenz Curve",pch=1,
+                 cex=1,overlay=FALSE,overcol="blue",
+                 xlab="Premium",ylab="Losses",
+                 col='black') {
+  Prm <- Prm[order(R)]
+  y <- y[order(R)]
+  R <- R[order(R)]
+  
+  F_prem<-cumsum(Prm[order(R)])/sum(Prm)
+  F_loss<-cumsum(y[order(R)])/sum(y)
+  
+  a <- c(0,F_prem)
+  b <- c(0,F_loss)
+  if(overlay==TRUE) { points(a,b,pch=pch,cex=cex,col=overcol)}
+  if(overlay!=TRUE) { plot(a,b,type='p',pch=pch,cex=cex,col=col,
+                           main=ttl,xlab=xlab,ylab=ylab) }
+  polygon(a,b,col="grey")
+  abline(0,1)
+  m <- length(a)
+  n <- length(R)
+  # Gini index:
+  estimate <- drop( 1 - (a[2:m]-a[1:(m-1)]) %*% (b[2:m]+b[1:(m-1)]) );
+  return(estimate) 
+}
+
+
+# Lift Chart
+
+
+GetAverage = function(n,data){
+  average = mean(data[1:(length(data)/n)])
+  for(i in 2:n-1){
+    temp = mean(data[((length(data)/n)*i):((length(data)/n)*(i+1))])
+    average = c(average, temp)
+  }
+  return(average)
+}
+
+
+# Summary GLM
+
+GLMtable <- function(object) {
+  coef.beta <- coef(object)
+  vc <- object$vcov
+  if (is.null(vc)) {vc <- vcov(object)}
+  s.err <- sqrt(diag(vc))    
+  err.beta <- s.err
+  test.value <- coef.beta / err.beta
+  dn <- c("Estimate", "s.e.")             
+  pvalue <- 2 * pt(-abs(test.value), object$df.residual)
+  coef.table <- cbind(coef.beta, err.beta, pvalue)  
+  dn2 <- "Pr(>|t|)"
+  dimnames(coef.table) <- list(names(coef.beta), c(dn, dn2))
+  return(coef.table) }
+
+```
+
+## Data generation
+
+```{r}
+GenerateData = function (nSample, nRealCatX, nFakeCatX, 
+                         nRealConX, nFakeConX, pho) {
+  set.seed(777)
+  
+  n <- nSample
+  p <- nRealCatX + nFakeCatX + nRealConX + nFakeConX
+  
+  p1 <- nRealConX + nFakeConX
+  Cov <- outer(1:p1, 1:p1, function(x,y) {pho^abs(x-y)})
+  xCon <- MASS::mvrnorm(n, rep(0, p1), Cov)
+  
+  p2 <- nRealCatX + nFakeCatX
+  xCat <- NULL
+  for(i in 1:p2){
+    xCat <- cbind(xCat, sample(c(-3,-2,1,4), size = n, replace = T, 
+                               prob = c(0.25,0.25,0.25,0.25)))
+  }
+  
+  muPoi <- exp(
+     -0.1 + 
+      0.5 * apply(as.matrix(xCon[, 1:round(nRealConX/2)]), 
+                  1, sum) +
+      0.1 * apply(as.matrix(xCon[, (round(nRealConX/2) + 1):nRealConX]), 
+                  1, sum) +
+     -0.5 * apply(as.matrix(xCat[, 1:round(nRealCatX/2)]), 
+                  1, sum) +
+      0.1 * apply(as.matrix(xCat[, (round(nRealCatX/2) + 1):nRealCatX]), 
+                  1, sum)
+     )
+  
+  muTruePoi <- 1*muPoi/mean(muPoi) # mean 1
+  
+  muGamma <- exp(6 +
+                   0.5 * apply(as.matrix(xCon[, 1:round(nRealConX/2)]), 
+                1, sum) +
+   -0.1 * apply(as.matrix(xCon[, (round(nRealConX/2) + 1):nRealConX]), 
+                1, sum) +
+    0.5 * apply(as.matrix(xCat[, 1:round(nRealCatX/2)]), 
+                1, sum) +
+   -0.1 * apply(as.matrix(xCat[, (round(nRealCatX/2) + 1):nRealCatX]), 
+                1, sum)
+   )
+  
+  muTrueGamma <- 10000 * muGamma/mean(muGamma) # mean 10000
+  
+  power = 1.5
+  phi = 2
+  lambda <- muTruePoi^(2 - power)/(phi * (2 - power))
+  alpha <- (2 - power)/(1 - power)
+  gam <- phi * (power - 1) * muTrueGamma^(power - 1)
+  
+  yPoi <- rpois(n, lambda = lambda)
+  y <- array(dim = n, NA)
+  for (i in (1:n)) {
+    y[i] <- rgamma(1, shape = -yPoi[i] * alpha, scale = gam[i]) 
+    if (y[i] > 0) {y[i] = y[i]*(1 + 0.25 * abs((rnorm(1))))}
+  }
+  
+  dataTweedie = as.data.frame(cbind(xCat,xCon,y))
+  dataTweedie[,1:p2] = lapply(dataTweedie[,1:p2], factor)
+  return(dataTweedie)
+}
+
+SMdata <- GenerateData(10000,20,10,20,10,0.5)
+```
+
+```{r}
+sum(SMdata$y==0)
+sum(SMdata$yPoi==0)
+
+summary(SMdata$mu)
+summary(SMdata$muTruePoi)
+summary(SMdata$muTrueGamma)
+
+sum(SMdata$y==0)/length(SMdata$y)
+
+summary(SMdata$y)
+```
+
+
+```{r}
+yName <- c("y")
+
+SMdata$Binary <- as.factor((SMdata[, yName] > 0) * 1)
+
+formulaTree <- as.formula(paste("Binary ~ ."))
+formulaGLM <- as.formula(paste("y ~ .-Binary"))
+```
+
+## Tweedie
+
+
+```{r}
+# xNames <- c("V1","V2","V3","V4","V5","V6","V7","V8","V9","V10")
+# 
+# yName <- c("y")
+# 
+# SMdata$Binary <- as.factor((SMdata[, yName] > 0) * 1)
+# 
+# formulaTree <- as.formula(paste("Binary ~", 
+#                                 noquote(paste(xNames, 
+#                                               collapse=' + '))))
+# formulaGLM <- as.formula(paste("y ~",
+#                                noquote(paste(xNames,
+#                                              collapse=' + '))))
+```
+
+```{r}
+# tweedieModel <-glm(formulaGLM, data=SMdata,family=tweedie(var.power=1.5, link.power=0))
+# (tweedieModel)
+```
+
+```{r}
+# TweedieGlmSM = PredictionError("TweedieGlm", SMdata$y, as.vector(tweedieModel$fitted.values))
+# PrintPredictionError(SMdata$y, as.vector(tweedieModel$fitted.values))
+```
+
+
+## Hybrid Tree on Simulation Result
+
+
+###  HTGLMNET
+
+```{r HTGLMNET, include=FALSE}
+library(rpart.plot)
+HybridTreeGlmnetFit <- function(formulaTree, formulaGLM, dataTrain, 
+                           cp, maxdepth, zeroThreshold,
+                           glmWhich, glmLambda) {
+  
+  rpartTree <- rpart::rpart(as.formula(formulaTree), data = dataTrain,
+                     xval = 0,  # fix
+                     maxdepth = maxdepth, cp = cp)  # tuning hyperparameter
+  
+  prp(rpartTree)
+  dataTrain$Node <- rpartTree$where  # assign node to each observation
+  dataTrain$yFitted <- 0
+  
+  yName <- all.vars(formulaTree)[1]
+  nodeId <- unique(dataTrain$Node)  # find node label at leaf
+  glmResult <- list()
+  
+  for (n in nodeId) {
+    tempSet <- dataTrain[which(dataTrain$Node == n), ]
+    percentZeros <- length(which(tempSet[, yName] == 0)) / nrow(tempSet)
+    
+    if (percentZeros >= zeroThreshold) {
+      dataTrain[which(dataTrain$Node == n), "yFitted"] <- 0
+      glmResult <- c(glmResult, list(0))
+      next
+    } 
+    if(nrow(tempSet) <40) {
+      glmYname <- all.vars(formulaGLM)[1]
+      dataTrain[which(dataTrain$Node == n), "yFitted"] <- 
+        mean(dataTrain[which(dataTrain$Node == n), glmYname])
+      glmResult <- c(glmResult,mean(dataTrain[which(dataTrain$Node == n), glmYname]))
+      next
+    }
+    
+    tempSet <- na.omit(tempSet) ## omit NA
+    
+    glmFit <- glmnetUtils::cva.glmnet(formulaGLM, data = tempSet, family = "gaussian")
+    glmResult <- c(glmResult, list(glmFit))
+    dataTrain[which(dataTrain$Node == n), "yFitted"] <- predict(glmFit, tempSet, 
+                                                                which = glmWhich, 
+                                                                s = glmLambda, 
+                                                                type = "response")
+    }
+  dataTrain$yFitted[dataTrain$yFitted < 0] <- 0
+  
+  linearIndex <- as.integer(rownames(rpartTree$frame)[nodeId])
+   
+  return(list(HybridTreeModel = list(tree = rpartTree, 
+                                     glms = glmResult, 
+                                     linearIndex = linearIndex,
+                                     nodeID = nodeId, 
+                                     glmWhich = glmWhich, 
+                                     glmLambda = glmLambda),
+              fittedSet = dataTrain))
+
+}
+
+
+
+HybridTreeGlmnetPredict <- function(model, newData) {
+  
+  rpartTree <- model$HybridTreeModel$tree
+  predictedFrameId <- rpart.predict(rpartTree, newdata = newData, nn = TRUE)$nn
+  for (n in model$HybridTreeModel$nodeID) {
+    frameId <- as.integer(rownames(rpartTree$frame))[n]
+    predictedFrameId[which(predictedFrameId == frameId)] <- n
+  }
+  
+  newData$NodeId <- predictedFrameId
+  
+  newData$yFitted <- 0
+  for(i in (1 : length(model$HybridTreeModel$nodeID))){
+    glmFit <- model$HybridTreeModel$glms[[i]]
+    nodeId <- model$HybridTreeModel$nodeID[i]
+    
+    if(length(which(newData$NodeId == nodeId)) == 0) next
+    if(is.double(glmFit)) {
+      newData[which(newData$NodeId == nodeId), ]$yFitted <- glmFit
+    } else {
+      newData[which(newData$NodeId == nodeId), ]$yFitted <-
+        predict(glmFit, newData[which(newData$NodeId == nodeId), ], 
+                which = model$HybridTreeModel$glmWhich, 
+                s = model$HybridTreeModel$glmLambda,
+                type = "response")
+    }
+  }
+  newData$yFitted[newData$yFitted < 0] <- 0
+  return(newData)
+}
+
+```
+
+
+```{r}
+boston_data = read.csv("boston_housing.csv")
+BostonSet <- HybridTreeGlmnetFit(as.formula(paste("medv ~ .")), as.formula(paste("medv ~ .")), dataTrain = boston_data, 0.00001, 5, 0.01, 1, "lambda.min")
+PrintPredictionError(as.vector(BostonSet$fittedSet$medv), as.vector(BostonSet$fittedSet$yFitted))
+
+```
+
+```{r}
+cp <- 0.00001
+maxdepth <- 1
+zeroThreshold <- 0.01
+glmWhich <- 1
+glmLambda <- "lambda.min"
+
+
+returnSet <- HybridTreeGlmnetFit(formulaTree, formulaGLM, dataTrain = SMdata, cp, maxdepth, zeroThreshold, glmWhich, glmLambda)
+names(returnSet)
+
+PrintPredictionError(as.vector(returnSet$fittedSet$y), as.vector(returnSet$fittedSet$yFitted))
+```
+
+
+Error in `contrasts<-`(`*tmp*`, value = contr.funs[1 + isOF[nn]]) : contrasts can be applied only to factors with 2 or more levels.
+
+This error occurs when you attempt to fit a regression model using a predictor variable that is either a factor or character and only has one unique value.
+
+
+```{r}
+cp <- 0.00001
+maxdepth <- 1
+zeroThreshold <- 0.01
+glmWhich <- 1
+glmLambda <- "lambda.min"
+
+
+returnSet <- HybridTreeGlmnetFit(formulaTree, formulaGLM, dataTrain = SMdata, cp, maxdepth, zeroThreshold, glmWhich, glmLambda)
+names(returnSet)
+
+PrintPredictionError(as.vector(returnSet$fittedSet$y), as.vector(returnSet$fittedSet$yFitted))
+
+
+
+gridSearch <- expand.grid(
+  cp = seq(0.00001, 0.001, 0.0001),
+  maxdepth = seq(1, 10, 1),
+  zeroThreshold = seq(0.01, 0.99, 0.01),
+  glmWhich = seq(1,10,1),
+  glmLambda = c("lambda.min", "lambda.1se")
+)
+
+
+dim(gridSearch)
+
+
+
+library(doParallel)
+library(foreach)
+library(rpart)
+library(data.table)
+detectCores()
+
+myCluster = makeCluster(6)
+
+registerDoParallel(myCluster)
+
+formulaTree <- as.formula(paste("Binary ~ ."))
+formulaGLM <- as.formula(paste("y ~ .-Binary"))
+  
+# grid search 
+trainingPL = foreach (i = 1:nrow(gridSearch), .combine = rbind ) %dopar% {
+  library(data.table)
+  Tune <- HybridTreeGlmnetFit(formulaTree, formulaGLM, dataTrain = SMdata, 
+                     cp=gridSearch$cp[i], 
+                     maxdepth=gridSearch$maxdepth[i], 
+                     zeroThreshold=gridSearch$zeroThreshold[i],
+                     glmWhich=gridSearch$glmWhich[i],
+                     glmLambda=as.character(gridSearch$glmLambda[i]))
+  PredictionError(i, as.vector(Tune$fittedSet$y), 
+                  as.vector(Tune$fittedSet$yFitted))
+}
+
+saveRDS(trainingPL, file = "trainingPL.rds")
+stopCluster(myCluster)
+
+
+trainingPL %>% 
+  dplyr::arrange(RMSE) %>%
+  head(10)
+
+gridSearch[19800,]
+
+
+
+
+
+
+
+
+
+
+gridSearchGLM <- expand.grid(
+  cp = seq(0.0001, 0.01, 0.0001),
+  maxdepth = seq(1, 10, 1),
+  zeroThreshold = seq(0.01, 0.99, 0.01)
+)
+
+dim(gridSearchGLM)
+
+library(doParallel)
+library(foreach)
+library(rpart)
+library(data.table)
+detectCores()
+
+myCluster = makeCluster(6)
+
+registerDoParallel(myCluster)
+
+formulaTree <- as.formula(paste("Binary ~ ."))
+formulaGLM <- as.formula(paste("y ~ .-Binary"))
+
+
+# grid search 
+trainPL = foreach (i = 1:nrow(gridSearchGLM), .combine = rbind ) %dopar% {
+  library(data.table)
+  
+  tryCatch({
+  Tune <- HybridTreeGlmFit(formulaTree, formulaGLM, dataTrain = SMdata, 
+                     cp=gridSearchGLM$cp[i], 
+                     maxdepth=gridSearchGLM$maxdepth[i], 
+                     zeroThreshold=gridSearchGLM$zeroThreshold[i])
+  
+  PredictionError(i, as.vector(Tune$fittedSet$y), 
+                  as.vector(Tune$fittedSet$yFitted))
+  },error=function(e){})
+  
+}
+
+saveRDS(trainPL, file = "trainPL.rds")
+stopCluster(myCluster)
+
+
+trainPL %>% 
+  dplyr::arrange(RMSE) %>%
+  head(10)
+
+
+
+
+
+
+cp <- 0.001
+maxdepth <- 4
+zeroThreshold <- 0.04
+
+
+returnSet <- hybridTreeGlmFit(formulaTree, formulaGLM, dataTrain = SMdata, cp, maxdepth, zeroThreshold)
+names(returnSet)
+
+PrintPredictionError(as.vector(returnSet$fittedSet$y), as.vector(returnSet$fittedSet$yFitted))
+
+
+
+
+gridSearchGLM <- expand.grid(
+  cp = seq(1, 1.5, 0.1),
+  maxdepth = seq(1, 10, 1),
+  zeroThreshold = seq(0.01, 0.99, 0.01)
+)
+
+
+
+dim(gridSearchGLM)
+
+for(i in 1:nrow(gridSearchGLM)) {
+  
+  # reproducibility
+  set.seed(777)
+  
+  # train model
+  formulaTree <- as.formula(paste("Binary ~ ."))
+  formulaGLM <- as.formula(paste("y ~ ."))
+  tryCatch({
+  Tune <- HybridTreeGlmFit(formulaTree, formulaGLM, dataTrain = SMdata, 
+                     cp=gridSearchGLM$cp[i], 
+                     maxdepth=gridSearchGLM$maxdepth[i], 
+                     zeroThreshold=gridSearchGLM$zeroThreshold[i])
+
+  gridSearchGLM$TrainMinError[i] <- mse(Tune$fittedSet$y, Tune$fittedSet$yFitted)
+  print(i)
+  },error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+}
+
+gridSearchGLM %>% 
+  dplyr::arrange(TrainMinError) %>%
+  head(10)
+```
+
+```{r}
+# ValidreturnSetHTGlm <- HybridTreeGlmPredict(model = returnSetHTGlm, newData = data2)
+# 
+# HTGlmTest = PredictionError("HTGlm", ValidreturnSetHTGlm$ClaimBC, 
+#                      ValidreturnSetHTGlm$yFitted)
+# PrintPredictionError(ValidreturnSetHTGlm$ClaimBC, 
+#                      ValidreturnSetHTGlm$yFitted)
+```
